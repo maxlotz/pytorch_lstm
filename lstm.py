@@ -75,7 +75,7 @@ for i in range(n_chars - seq_length):
 model = LSTMTagger(EMBEDDING_DIM, HIDDEN_DIM, n_vocab, n_vocab)
 loss_function = nn.NLLLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.1)
-scheduler = optim.lr_scheduler.StepLR(optimizer, 1000, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, 2500, gamma=0.1)
 
 if SHUFFLE == True:
 	# use random_state as seed to maintain same shuffle and train/test/val splits order between subsequent runs of the program
@@ -98,7 +98,7 @@ def test(train_batch_idx):
 		print('Test:\t[{}|{}]\ttest accuracy: {:.4f}'.format(train_batch_idx, batch_idx, acc))
 		running_acc += acc
 		if batch_idx==test_batches:
-			test_logger.log_value('test_accuracy', 100*running_acc/test_batches, train_batch_idx)
+			test_logger.log_value('test_accuracy', running_acc/test_batches, train_batch_idx)
 			model.train()
 			break
 
