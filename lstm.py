@@ -19,11 +19,13 @@ EMBEDDING_DIM = 500
 HIDDEN_DIM = 500
 seq_length = 100
 # make command to make variable entire training/test set
-test_after_every = 100 # no of train batches to test after
-test_batches = 200 # no of batches to test !!! numbers above 200 cause seg_fault!!!
-train_batches = 30000 # no of batches to train for
+test_after_every = 1000 # no of train batches to test after
+test_batches = 500 # no of batches to test
+train_batches = 400000 # no of batches to train for
 model_savepath = os.path.join('models','test_')
-save_after_every = 2000
+save_after_every = 10000
+
+use_gpu = torch.cuda.is_available()
 
 #prepare dataset
 '''
@@ -72,10 +74,14 @@ for i in range(n_chars - seq_length):
 	data.append([char_to_int[data] for data in raw_text[i:i+seq_length]])
 	label.append([char_to_int[label] for label in raw_text[i+1:i+seq_length+1]])
 
-model = LSTMTagger(EMBEDDING_DIM, HIDDEN_DIM, n_vocab, n_vocab)
+model = LSTMTagger(EMBEDDING_DIM, HIDDEN_DIM, n_vocab, n_vocab, use_gpu)
+
+if use_gpu:
+	model.cuda()
+
 loss_function = nn.NLLLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.1)
-scheduler = optim.lr_scheduler.StepLR(optimizer, 2500, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, 20000, gamma=0.1)
 
 if SHUFFLE == True:
 	# use random_state as seed to maintain same shuffle and train/test/val splits order between subsequent runs of the program
@@ -84,6 +90,7 @@ if SHUFFLE == True:
 # use train_test_split twice if validation is needed
 train_data, test_data, train_label, test_label = train_test_split(data, label, test_size=0.2)
 
+'''
 train_logger = Logger('logs/wonderland_train')
 test_logger = Logger('logs/wonderland_test')
 
@@ -91,9 +98,12 @@ def test(train_batch_idx):
 	running_acc = 0
 	model.eval()
 	for batch_idx, (x, y) in enumerate(zip(test_data, test_label)):
-		pred = model(torch.tensor(x))
+		x, y = torch.tensor(x), torch.tensor(y)
+		if use_gpu:
+			x, y = x.cuda(), y.cuda()
+		pred = model(x)
 		pred = pred.argmax(1)
-		correct = torch.tensor(y).eq(pred.long()).sum()
+		correct = y.eq(pred.long()).sum()
 		acc = 100*correct.tolist()/pred.nelement()
 		print('Test:\t[{}|{}]\ttest accuracy: {:.4f}'.format(train_batch_idx, batch_idx, acc))
 		running_acc += acc
@@ -106,14 +116,17 @@ train_batch_idx = 0
 for epoch in range(math.ceil(train_batches/len(train_data))):
 	for (x, y) in zip(train_data, train_label):
 		model.zero_grad()
-		model.hidden = model.init_hidden()
-		pred = model(torch.tensor(x))
-		loss = loss_function(pred, torch.tensor(y))
+		model.hidden = model.init_hidden(use_gpu)
+		x, y = torch.tensor(x), torch.tensor(y)
+		if use_gpu:
+			x, y = x.cuda(), y.cuda()
+		pred = model(x)
+		loss = loss_function(pred, y)
 		loss.backward()
 		optimizer.step()
 		scheduler.step()
 		pred = pred.argmax(1)
-		correct = torch.tensor(y).eq(pred.long()).sum()
+		correct = y.eq(pred.long()).sum()
 		# tensor elements always return tensors? Had to use tolist to return as int
 		acc = 100*correct.tolist()/pred.nelement()
 		train_logger.log_value('loss', loss, train_batch_idx)
@@ -129,3 +142,42 @@ for epoch in range(math.ceil(train_batches/len(train_data))):
 		train_batch_idx += 1
 	if train_batch_idx == train_batches:
 		break
+'''
+def test_dataset(model_savepath, test_data, test_label):
+	with torch.no_grad():
+		model.load_state_dict(torch.load(os.path.join('models', model_savepath)))
+		model.eval()
+		running_acc = 0
+		for batch_idx, (x, y) in enumerate(zip(test_data, test_label)):
+			x, y = torch.tensor(x), torch.tensor(y)
+			if use_gpu:
+				x, y = x.cuda(), y.cuda()
+			pred = model(x)
+			pred = pred.argmax(1)
+			correct = y.eq(pred.long()).sum()
+			acc = 100*correct.tolist()/pred.nelement()
+			print('Batch [{}/{}]\tAccuracy:{:.4f}'.format(batch_idx,len(test_data),acc))
+			running_acc += acc
+		epoch_acc = running_acc/len(test_data)
+		print('Epoch Accuracy:{:.4f}'.format(epoch_acc))
+		return epoch_acc
+
+def predict(model_savepath, test_data, test_length):
+	with torch.no_grad():
+		model.load_state_dict(torch.load(os.path.join('models', model_savepath)))
+		model.eval()
+
+		start = np.random.randint(len(test_data)-1)
+		infer = torch.tensor(test_data[start])
+		if use_gpu:
+			infer = infer.cuda()
+		inference = infer.tolist()
+
+		for i in range(test_length):
+			pred = model(infer)
+			infer = pred.argmax(1)
+			inference.append(infer[-1].tolist())
+		print(''.join(chars[i] for i in inference))
+
+#test_dataset('test_iter10000.pth', test_data, test_label)
+predict('test_iter100000.pth', test_data, 1000)
