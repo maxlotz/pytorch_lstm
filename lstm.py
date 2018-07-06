@@ -7,142 +7,98 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import transforms, utils
 from tensorboard_logger import Logger
 
 from Models import LSTMTagger
+from DataLoaders import LSTMDataset
 import math
 
-SHUFFLE = True
 EMBEDDING_DIM = 500
 HIDDEN_DIM = 500
+split = [0.8,0.1,0.1]
 seq_length = 100
 # make command to make variable entire training/test set
+batch_size = 16
 test_after_every = 1000 # no of train batches to test after
 test_batches = 500 # no of batches to test
-train_batches = 400000 # no of batches to train for
+train_epochs = 10 # no of batches to train for
 model_savepath = os.path.join('models','test_')
 save_after_every = 10000
 
 use_gpu = torch.cuda.is_available()
 
-#prepare dataset
-'''
-class LSTMDataset(Dataset):
-	def __init__(self, seq_length):
-		self.seq_length = seq_length
-		datadir = "datasets"
-		filename = "wonderland.txt"
-		os.chdir(datadir)
-		with open(filename, 'r') as f:
-			raw_text = f.read().lower()
-		chars = sorted(list(set(raw_text)))
-		char_to_int = dict((c,i) for i, c in enumerate(chars))
-		n_chars = len(raw_text)
-		n_vocab = len(chars)
+#It's a bit inneficient but its simple
+train_dataset = LSTMDataset('train', split, seq_length)
+val_dataset = LSTMDataset('val', split, seq_length)
+test_dataset = LSTMDataset('test', split, seq_length)
+train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
+val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
+test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
+print(len(train_dataset))
+print(len(val_dataset))
+print(len(test_dataset))
 
-		x, y = [],[]
-		for i in range(n_chars - seq_length):
-		x.append([char_to_int[x] for x in raw_text[i:i+seq_length]])
-		y.append([char_to_int[y] for y in raw_text[i+1:i+seq_length+1]])
-
-		self.data = torch.tensor(x)
-		self.label = torch.tensor(y)
-
-	def __len__(self):
-		return data.size(0)
-
-	def __getitem__(self, idx)
-		sample = {'data':self.data[idx,:], 'label':self.label[idx,:]}
-
-'''
-
-
-
-datadir = "datasets"
-filename = "wonderland.txt"
-with open(os.path.join(datadir,filename), 'r') as f:
-	raw_text = f.read().lower()
-chars = sorted(list(set(raw_text)))
-char_to_int = dict((c,i) for i, c in enumerate(chars))
-n_chars = len(raw_text)
-n_vocab = len(chars)
-
-data, label = [],[]
-for i in range(n_chars - seq_length):
-	data.append([char_to_int[data] for data in raw_text[i:i+seq_length]])
-	label.append([char_to_int[label] for label in raw_text[i+1:i+seq_length+1]])
-
-model = LSTMTagger(EMBEDDING_DIM, HIDDEN_DIM, n_vocab, n_vocab, use_gpu)
+model = LSTMTagger(EMBEDDING_DIM, HIDDEN_DIM, train_dataset.n_vocab, train_dataset.n_vocab, batch_size, num_layers=3, dropout=0.5)
 
 if use_gpu:
 	model.cuda()
 
 loss_function = nn.NLLLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.1)
-scheduler = optim.lr_scheduler.StepLR(optimizer, 20000, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, 100000, gamma=0.1)
 
-if SHUFFLE == True:
-	# use random_state as seed to maintain same shuffle and train/test/val splits order between subsequent runs of the program
-	data, label = shuffle(data, label, random_state=0)
+logger = Logger('logs/wonderland')
 
-# use train_test_split twice if validation is needed
-train_data, test_data, train_label, test_label = train_test_split(data, label, test_size=0.2)
+def test(model, train_batch_idx, logger=None):
+	with torch.no_grad():
+		running_acc = 0
+		model.eval()
+		for batch_idx, (x, y) in enumerate(zip(test_data, test_label)):
+			x, y = torch.tensor(x), torch.tensor(y)
+			if use_gpu:
+				x, y = x.cuda(), y.cuda()
+			pred = model(x)
+			pred = pred.argmax(1)
+			correct = y.eq(pred.long()).sum()
+			acc = 100*correct.tolist()/pred.nelement()
+			print('Test:\t[{}|{}]\ttest accuracy: {:.4f}'.format(train_batch_idx, batch_idx, acc))
+			running_acc += acc
+			if batch_idx==test_batches:
+				if logger:
+					logger.log_value('test_accuracy', running_acc/test_batches, train_batch_idx)
+				model.train()
+				break
 
-'''
-train_logger = Logger('logs/wonderland_train')
-test_logger = Logger('logs/wonderland_test')
-
-def test(train_batch_idx):
-	running_acc = 0
-	model.eval()
-	for batch_idx, (x, y) in enumerate(zip(test_data, test_label)):
-		x, y = torch.tensor(x), torch.tensor(y)
-		if use_gpu:
-			x, y = x.cuda(), y.cuda()
-		pred = model(x)
-		pred = pred.argmax(1)
-		correct = y.eq(pred.long()).sum()
-		acc = 100*correct.tolist()/pred.nelement()
-		print('Test:\t[{}|{}]\ttest accuracy: {:.4f}'.format(train_batch_idx, batch_idx, acc))
-		running_acc += acc
-		if batch_idx==test_batches:
-			test_logger.log_value('test_accuracy', running_acc/test_batches, train_batch_idx)
-			model.train()
-			break
-
-train_batch_idx = 0
-for epoch in range(math.ceil(train_batches/len(train_data))):
-	for (x, y) in zip(train_data, train_label):
-		model.zero_grad()
-		model.hidden = model.init_hidden(use_gpu)
-		x, y = torch.tensor(x), torch.tensor(y)
-		if use_gpu:
-			x, y = x.cuda(), y.cuda()
-		pred = model(x)
-		loss = loss_function(pred, y)
-		loss.backward()
-		optimizer.step()
-		scheduler.step()
-		pred = pred.argmax(1)
-		correct = y.eq(pred.long()).sum()
-		# tensor elements always return tensors? Had to use tolist to return as int
-		acc = 100*correct.tolist()/pred.nelement()
-		train_logger.log_value('loss', loss, train_batch_idx)
-		train_logger.log_value('train_accuracy', acc, train_batch_idx)
-		print('Train:[{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(train_batch_idx, loss, acc))
-		if train_batch_idx % test_after_every == 0:
-			test(train_batch_idx)
-		if train_batch_idx % save_after_every == 0:
-			print('saving model {}'.format(train_batch_idx))
-			torch.save(model.state_dict(), model_savepath + 'iter{}.pth'.format(train_batch_idx))
-		if train_batch_idx == train_batches:
-			break
-		train_batch_idx += 1
-	if train_batch_idx == train_batches:
-		break
-'''
+def train(train_dataloader, test_dataloader, train_epochs, batch_size, save_after_every, model_savepath):
+	train_batch_idx = 0
+	for epoch in range(train_epochs):
+		for batch_idx, sample in enumerate(dataloader):
+			model.zero_grad()
+			model.hidden = model.init_hidden(batch_size)
+			x, y = sample['data'].transpose(0,1), sample['label'].transpose(0,1)
+			if use_gpu:
+				x, y = x.cuda(), y.cuda()
+			pred = model(x)
+			loss = loss_function(pred.transpose(1,2),y)
+			loss.backward()
+			optimizer.step()
+			scheduler.step()
+			pred = pred.argmax(2)
+			correct = y.eq(pred.long()).sum()
+			# tensor elements always return tensors? Had to use tolist to return as int
+			acc = 100*correct.tolist()/pred.nelement()
+			logger.log_value('train_loss', loss, train_batch_idx)
+			logger.log_value('train_accuracy', acc, train_batch_idx)
+			print('Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(epoch, batch_idx, loss, acc))
+			#if train_batch_idx % test_after_every == 0:
+				#test(train_batch_idx)
+			if train_batch_idx % save_after_every == 0:
+				print('saving model {}'.format(train_batch_idx))
+				torch.save(model.state_dict(), model_savepath + 'iter{}.pth'.format(train_batch_idx))
+			train_batch_idx += 1
+		
 def test_dataset(model_savepath, test_data, test_label):
 	with torch.no_grad():
 		model.load_state_dict(torch.load(os.path.join('models', model_savepath)))
@@ -180,4 +136,4 @@ def predict(model_savepath, test_data, test_length):
 		print(''.join(chars[i] for i in inference))
 
 #test_dataset('test_iter10000.pth', test_data, test_label)
-predict('test_iter100000.pth', test_data, 1000)
+#predict('test_iter300000.pth', test_data, 1000)

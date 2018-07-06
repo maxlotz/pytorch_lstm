@@ -14,7 +14,7 @@ class LSTMTagger(nn.Module):
 		self.hidden2tag = nn.Linear(hidden_dim, tagset_size)
 		self.hidden = self.init_hidden(batch_size, use_gpu)
 
-	def init_hidden(self, batch_size, use_gpu):
+	def init_hidden(self, batch_size, use_gpu=True):
 		if use_gpu:
 			return (torch.zeros(self.num_layers, batch_size, self.hidden_dim).cuda(),
 					torch.zeros(self.num_layers, batch_size, self.hidden_dim).cuda())
