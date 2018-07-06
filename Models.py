@@ -3,28 +3,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LSTMTagger(nn.Module):
-	def __init__(self, embedding_dim, hidden_dim, vocab_size, tagset_size, use_gpu):
+	def __init__(self, embedding_dim, hidden_dim, vocab_size, tagset_size, batch_size, use_gpu=True, num_layers=1, dropout=0.2):
 		super(LSTMTagger, self).__init__()
+		self.num_layers = num_layers
+
 		self.hidden_dim = hidden_dim
-
 		self.word_embeddings = nn.Embedding(vocab_size, embedding_dim)
-		self.lstm = nn.LSTM(embedding_dim, hidden_dim)
+		self.dropout = nn.Dropout(p=dropout)
+		self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=num_layers, dropout=dropout)
 		self.hidden2tag = nn.Linear(hidden_dim, tagset_size)
-		self.hidden = self.init_hidden(use_gpu)
+		self.hidden = self.init_hidden(batch_size, use_gpu)
 
-	def init_hidden(self, use_gpu):
+	def init_hidden(self, batch_size, use_gpu):
 		if use_gpu:
-			return (torch.zeros(1, 1, self.hidden_dim).cuda(),
-					torch.zeros(1, 1, self.hidden_dim).cuda())
+			return (torch.zeros(self.num_layers, batch_size, self.hidden_dim).cuda(),
+					torch.zeros(self.num_layers, batch_size, self.hidden_dim).cuda())
 		else:
-			return (torch.zeros(1, 1, self.hidden_dim),
-					torch.zeros(1, 1, self.hidden_dim))
-		
+			return (torch.zeros(self.num_layers, batch_size, self.hidden_dim),
+					torch.zeros(self.num_layers, batch_size, self.hidden_dim))
 
 	def forward(self, sentence):
 		embeds = self.word_embeddings(sentence)
-		lstm_out, self.hidden = self.lstm(embeds.view(len(sentence), 1, -1), self.hidden)
-		#will need to combine together if using batches
-		tag_space = self.hidden2tag(lstm_out.view(len(sentence), -1))
-		tag_scores = F.log_softmax(tag_space, dim=1)
+		embeds = self.dropout(embeds)
+		lstm_out, self.hidden = self.lstm(embeds, self.hidden)
+		tag_space = self.hidden2tag(lstm_out)
+		tag_scores = F.log_softmax(tag_space, dim=2)
 		return tag_scores
