@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LSTMTagger(nn.Module):
-	def __init__(self, embedding_dim, hidden_dim, vocab_size, tagset_size, batch_size, use_gpu=True, num_layers=1, dropout=0.2):
+	def __init__(self, embedding_dim, hidden_dim, vocab_size, tagset_size, batch_size, use_gpu, num_layers, dropout):
 		super(LSTMTagger, self).__init__()
 		self.num_layers = num_layers
 
