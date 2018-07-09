@@ -28,7 +28,7 @@ parser.add_argument('--lr', type=float, default=0.1,
                     help='initial learning rate')
 parser.add_argument('--seq_len', type=int, default=100,
                     help='sequence length')
-parser.add_argument('--set', type=str, default="train",
+parser.add_argument('--set', type=str, default="train", choices=['train','val','test'],
                     help='train, val, test')
 parser.add_argument('--split', type=list, default=[0.8, 0.1, 0.1],
                     help='train/val/test split')
@@ -46,6 +46,11 @@ parser.add_argument('--name', type=str, default="lstm_test",
                     help='name used for model save and tensorboard logging')
 parser.add_argument('--test_name', type=str, default="lstm_test_iter10000.pth",
                     help='name of file to test dataset on')
+parser.add_argument('--predict', action='store_true',
+                    help='makes prediction of test_length starting with random data point')
+parser.add_argument('--test_length', type=int, default=1000,
+                    help='length of sequence to predict')
+
 
 args = parser.parse_args()
 
@@ -100,55 +105,68 @@ def test(dataloader):
 			model.train()
 			return(running_acc/len(dataloader))
 
-if args.set == 'train':
-	train_batch_idx = 0
-	for epoch in range(args.epochs):
-		for batch_idx, sample in enumerate(train_dataloader):
-			model.zero_grad()
-			model.hidden = model.init_hidden(args.batch_size)
-			x, y = sample['data'].transpose(0,1), sample['label'].transpose(0,1)
-			if use_gpu:
-				x, y = x.cuda(), y.cuda()
-			pred = model(x)
-			loss = loss_function(pred.transpose(1,2),y)
-			loss.backward()
-			optimizer.step()
-			#scheduler.step()
-			pred = pred.argmax(2)
-			correct = y.eq(pred.long()).sum()
-			# tensor elements always return tensors? Had to use tolist to return as int
-			acc = 100*correct.tolist()/pred.nelement()
-			logger.log_value('train_loss', loss, train_batch_idx)
-			logger.log_value('train_accuracy', acc, train_batch_idx)
-			print('Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(epoch, batch_idx, loss, acc))
-			if train_batch_idx % args.test_every == 0:
-				test(train_dataloader)
-			if train_batch_idx % args.save_every == 0:
-				print('saving model {}'.format(train_batch_idx))
-				torch.save(model.state_dict(), model_savepath + 'iter{}.pth'.format(train_batch_idx))
-			train_batch_idx += 1
+if not args.predict:
+	if args.set == 'train':
+		train_batch_idx = 0
+		for epoch in range(args.epochs):
+			for batch_idx, sample in enumerate(train_dataloader):
+				model.zero_grad()
+				model.hidden = model.init_hidden(args.batch_size)
+				x, y = sample['data'].transpose(0,1), sample['label'].transpose(0,1)
+				if use_gpu:
+					x, y = x.cuda(), y.cuda()
+				pred = model(x)
+				loss = loss_function(pred.transpose(1,2),y)
+				loss.backward()
+				optimizer.step()
+				#scheduler.step()
+				pred = pred.argmax(2)
+				correct = y.eq(pred.long()).sum()
+				# tensor elements always return tensors? Had to use tolist to return as int
+				acc = 100*correct.tolist()/pred.nelement()
+				logger.log_value('train_loss', loss, train_batch_idx)
+				logger.log_value('train_accuracy', acc, train_batch_idx)
+				print('Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(epoch, batch_idx, loss, acc))
+				if train_batch_idx % args.test_every == 0:
+					# training will periodically test on val set or test set if validation doesn't exist
+					if len(val_dataloader) == 1:
+						test(test_dataloader)
+					else:
+						test(val_dataloader)
+				if train_batch_idx % args.save_every == 0:
+					print('saving model {}'.format(train_batch_idx))
+					torch.save(model.state_dict(), model_savepath + 'iter{}.pth'.format(train_batch_idx))
+				train_batch_idx += 1
 
-if args.set == 'val':
-	test(val_dataloader)
-if args.set == 'test':
-	test(test_dataloader)
+	if args.set == 'val':
+		test(val_dataloader)
+	if args.set == 'test':
+		test(test_dataloader)
 
-def predict(model_savepath, test_data, test_length):
+if args.predict:
 	with torch.no_grad():
-		model.load_state_dict(torch.load(os.path.join('models', model_savepath)))
+		model.load_state_dict(torch.load(os.path.join('models', args.test_name)))
 		model.eval()
-
-		start = np.random.randint(len(test_data)-1)
-		infer = torch.tensor(test_data[start])
+		if args.set == 'train':
+			dataset = train_dataset
+		if args.set == 'val':
+			dataset = val_dataset
+		if args.set == 'test':
+			dataset = test_dataset
+		start = np.random.randint(len(dataset)-1)
+		infer = dataset[start]['data']
 		if use_gpu:
 			infer = infer.cuda()
-		inference = infer.tolist()
-
-		for i in range(test_length):
+		inference = [train_dataset.chars[idx] for idx in infer.tolist()]
+		infer = infer.view(-1,1)
+		print('Seed sentence:\n' + ''.join(inference) + '\n')
+		for i in range(args.test_length):
+			infer = infer.expand(-1,model.hidden[0].size(1))
 			pred = model(infer)
-			infer = pred.argmax(1)
-			inference.append(infer[-1].tolist())
-		print(''.join(chars[i] for i in inference))
+			infer = pred.argmax(2)
+			infer = infer[:,0]
+			print('{}:\t'.format(i) + ''.join(train_dataset.chars[idx] for idx in infer.tolist()) + '\n')
+			inference.append(train_dataset.chars[infer.tolist()[-1]])
+			infer = infer.view(-1,1)
 
-#test_dataset('test_iter10000.pth', test_data, test_label)
-#predict('test_iter300000.pth', test_data, 1000)
+	print(''.join(inference))
