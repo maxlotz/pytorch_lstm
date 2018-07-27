@@ -19,8 +19,9 @@ class LSTMDataset(Dataset):
 		self.split = [float(i)/sum(split) for i in split]
 		self.seq_length = seq_length
 		datadir = "datasets"
+		wonderdir = "wonderland"
 		filename = "wonderland.txt"
-		with open(os.path.join(datadir,filename), 'r') as f:
+		with open(os.path.join(datadir,wonderdir,filename), 'r') as f:
 			raw_text = f.read().lower()
 		self.chars = sorted(list(set(raw_text)))
 		self.char_to_int = dict((c,i) for i, c in enumerate(self.chars))
@@ -32,22 +33,14 @@ class LSTMDataset(Dataset):
 			x.append([self.char_to_int[x] for x in raw_text[i:i+seq_length]])
 			y.append([self.char_to_int[y] for y in raw_text[i+1:i+seq_length+1]])
 
-		train_x, other_x, train_y, other_y = train_test_split(x,y,test_size=self.split[1] + self.split[2], random_state=0)
+		data, label = {},{}
+		data['train'], other_x, label['train'], other_y = train_test_split(x,y,test_size=self.split[1] + self.split[2], random_state=0)
 		if self.split[1] == 0:
-			val_x, test_x, val_y, test_y = train_test_split(other_x, other_y, train_size=1, random_state=0)
+			data['val'], data['test'], label['val'], label['test'] = train_test_split(other_x, other_y, train_size=1, random_state=0)
 		else:
-			val_x, test_x, val_y, test_y = train_test_split(other_x, other_y, test_size=self.split[2]/(self.split[1]+self.split[2]), random_state=0)
-		if self.set=='train':
-			self.data = train_x
-			self.label = train_y
-		if self.set=='val':
-			self.data = val_x
-			self.label = val_y
-		if self.set=='test':
-			self.data = test_x
-			self.label = test_y
-		self.data = torch.tensor(self.data)
-		self.label = torch.tensor(self.label)
+			data['val'], data['test'], label['val'], label['test'] = train_test_split(other_x, other_y, test_size=self.split[2]/(self.split[1]+self.split[2]), random_state=0)
+		self.data = torch.tensor(data[set_])
+		self.label = torch.tensor(label[set_])
 
 	def __len__(self):
 		return self.data.size(0)

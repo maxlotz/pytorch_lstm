@@ -16,6 +16,8 @@ import argparse
 
 parser = argparse.ArgumentParser(description='multi-dataset LSTM train/tester with tensorboard logging')
 
+parser.add_argument('--dataset', type=str, default="wonderland", choices=['wonderland','wikitext','audio'],
+                    help='wonderland, wikitext, audio')
 parser.add_argument('--emsize', type=int, default=500,
                     help='size of word embeddings')
 parser.add_argument('--nhid', type=int, default=500,
@@ -32,7 +34,7 @@ parser.add_argument('--set', type=str, default="train", choices=['train','val','
                     help='train, val, test')
 parser.add_argument('--split', type=list, default=[0.8, 0.1, 0.1],
                     help='train/val/test split')
-parser.add_argument('--epochs', type=int, default=100,
+parser.add_argument('--epochs', type=int, default=200,
                     help='number of epochs to train for')
 parser.add_argument('--batch_size', type=int, default=64, metavar='N',
                     help='batch size')
@@ -42,7 +44,7 @@ parser.add_argument('--test_batches', type=int, default=200,
                     help='number of batches to test')
 parser.add_argument('--save_every', type=int, default=10000,
                     help='number of batch iterations to save model after')
-parser.add_argument('--name', type=str, default="lstm_test",
+parser.add_argument('--name', type=str, default="lstm_test2",
                     help='name used for model save and tensorboard logging')
 parser.add_argument('--test_name', type=str, default="lstm_test_iter10000.pth",
                     help='name of file to test dataset on')
@@ -50,23 +52,17 @@ parser.add_argument('--predict', action='store_true',
                     help='makes prediction of test_length starting with random data point')
 parser.add_argument('--test_length', type=int, default=1000,
                     help='length of sequence to predict')
-
-
 args = parser.parse_args()
-
 
 model_savepath = os.path.join('models',args.name)
 
 use_gpu = torch.cuda.is_available()
 
 #It's a bit inneficient but its simple. Random seed inside Dataset ensures its the same order.
-train_dataset = LSTMDataset('train', args.split, args.seq_len)
-val_dataset = LSTMDataset('val', args.split, args.seq_len)
-test_dataset = LSTMDataset('test', args.split, args.seq_len)
-#drop_last=True to ensure dataloader always gives model correct batch size
-train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
+Dataset, DataLoader = {}, {}
+for set_ in ['train', 'val', 'test']:
+	Dataset[set_] = LSTMDataset(args.dataset, set_, args.split, args.seq_len)
+	DataLoader[set_] = DataLoader(Dataset[set_], batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
 
 model = LSTMTagger(args.emsize, args.nhid, train_dataset.n_vocab, train_dataset.n_vocab, args.batch_size, use_gpu, args.nlayers, args.dropout)
 
@@ -138,35 +134,34 @@ if not args.predict:
 					torch.save(model.state_dict(), model_savepath + 'iter{}.pth'.format(train_batch_idx))
 				train_batch_idx += 1
 
-	if args.set == 'val':
-		test(val_dataloader)
-	if args.set == 'test':
-		test(test_dataloader)
-
+	if args.set in ['val', 'test']:
+		test(Dataloader[args.set])
+	
 if args.predict:
+	''' 
+	Gets random sequence from dataset, inputs it into model, concatenates the
+	new predicted word onto the input and uses the new sequence [1:] as the next
+	input. Repeats this to get prediction of args.test_length
+	
+	'''
 	with torch.no_grad():
 		model.load_state_dict(torch.load(os.path.join('models', args.test_name)))
 		model.eval()
-		if args.set == 'train':
-			dataset = train_dataset
-		if args.set == 'val':
-			dataset = val_dataset
-		if args.set == 'test':
-			dataset = test_dataset
+		dataset = Dataset[args.set]
 		start = np.random.randint(len(dataset)-1)
 		infer = dataset[start]['data']
 		if use_gpu:
 			infer = infer.cuda()
 		inference = [train_dataset.chars[idx] for idx in infer.tolist()]
 		infer = infer.view(-1,1)
-		print('Seed sentence:\n' + ''.join(inference) + '\n')
+		infer = infer.expand(-1,model.hidden[0].size(1))
 		for i in range(args.test_length):
-			infer = infer.expand(-1,model.hidden[0].size(1))
 			pred = model(infer)
-			infer = pred.argmax(2)
-			infer = infer[:,0]
-			print('{}:\t'.format(i) + ''.join(train_dataset.chars[idx] for idx in infer.tolist()) + '\n')
-			inference.append(train_dataset.chars[infer.tolist()[-1]])
-			infer = infer.view(-1,1)
+			pred = pred.argmax(2)
+			pred = pred[-1,:]
+			infer = torch.cat((infer,pred.view(1,-1)),0)
+			infer = infer[1:,:]
+			#print('{}:\t'.format(i) + ''.join(train_dataset.chars[idx] for idx in infer.tolist()) + '\n')
+			inference.append(train_dataset.chars[infer[-1,0].tolist()])
 
 	print(''.join(inference))
