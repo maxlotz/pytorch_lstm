@@ -1,4 +1,6 @@
 import os
+import math
+import argparse
 import numpy as np
 
 import torch
@@ -11,14 +13,17 @@ from tensorboard_logger import Logger
 
 from Models import LSTMTagger
 from DataLoaders import LSTMDataset
-import math
-import argparse
 
-parser = argparse.ArgumentParser(description='multi-dataset LSTM train/tester with tensorboard logging')
+parser = argparse.ArgumentParser(
+		description='multi-dataset LSTM train/tester with tensorboard logging')
 
-parser.add_argument('--dataset', type=str, default="wonderland", choices=['wonderland','wikitext','audio'],
+parser.add_argument('--dataset', type=str, default="wonderland", 
+					choices=['wonderland','wikitext','audio'],
                     help='wonderland, wikitext, audio')
-parser.add_argument('--emsize', type=int, default=500,
+parser.add_argument('--mode', type=str, default='all2one', 
+					choices=['all2one', 'all2all'],
+                    help='defines input to output connectivity')
+parser.add_argument('--emsize', type=int, default=None,
                     help='size of word embeddings')
 parser.add_argument('--nhid', type=int, default=500,
                     help='number of hidden units per layer')
@@ -30,7 +35,8 @@ parser.add_argument('--lr', type=float, default=0.1,
                     help='initial learning rate')
 parser.add_argument('--seq_len', type=int, default=100,
                     help='sequence length')
-parser.add_argument('--set', type=str, default="train", choices=['train','val','test'],
+parser.add_argument('--set', type=str, default="train",
+					choices=['train','val','test'],
                     help='train, val, test')
 parser.add_argument('--split', type=list, default=[0.8, 0.1, 0.1],
                     help='train/val/test split')
@@ -44,12 +50,13 @@ parser.add_argument('--test_batches', type=int, default=200,
                     help='number of batches to test')
 parser.add_argument('--save_every', type=int, default=10000,
                     help='number of batch iterations to save model after')
-parser.add_argument('--name', type=str, default="lstm_test2",
+parser.add_argument('--name', type=str, default="wonder_noembed",
                     help='name used for model save and tensorboard logging')
 parser.add_argument('--test_name', type=str, default="lstm_test_iter10000.pth",
                     help='name of file to test dataset on')
 parser.add_argument('--predict', action='store_true',
-                    help='makes prediction of test_length starting with random data point')
+                    help='makes prediction of test_length starting with random'
+                    'data point')
 parser.add_argument('--test_length', type=int, default=1000,
                     help='length of sequence to predict')
 args = parser.parse_args()
@@ -58,13 +65,16 @@ model_savepath = os.path.join('models',args.name)
 
 use_gpu = torch.cuda.is_available()
 
-#It's a bit inneficient but its simple. Random seed inside Dataset ensures its the same order.
-Dataset, DataLoader = {}, {}
+# Inneficient but simple. Random seed inside Dataset ensures consistent order.
+DatasetDict, DataLoaderDict = {}, {}
 for set_ in ['train', 'val', 'test']:
-	Dataset[set_] = LSTMDataset(args.dataset, set_, args.split, args.seq_len)
-	DataLoader[set_] = DataLoader(Dataset[set_], batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
+	DatasetDict[set_] = LSTMDataset(set_, args.split, args.seq_len)
+	DataLoaderDict[set_] = DataLoader(DatasetDict[set_], batch_size=args.batch_size,
+		                          shuffle=True, num_workers=4, drop_last=True)
 
-model = LSTMTagger(args.emsize, args.nhid, train_dataset.n_vocab, train_dataset.n_vocab, args.batch_size, use_gpu, args.nlayers, args.dropout)
+model = LSTMTagger(args.nhid, DatasetDict['train'].n_vocab, 
+	               DatasetDict['train'].n_vocab, args.batch_size, use_gpu, 
+	               args.nlayers, args.dropout, args.emsize)
 
 if use_gpu:
 	model.cuda()
@@ -72,13 +82,13 @@ if use_gpu:
 loss_function = nn.NLLLoss()
 optimizer = optim.SGD(model.parameters(), lr=args.lr)
 #scheduler = optim.lr_scheduler.StepLR(optimizer, 100000, gamma=0.1)
-
 logger = Logger(os.path.join('logs', args.name))
 
 def test(dataloader):
 	with torch.no_grad():
 		if args.set in ['val', 'test']:
-			model.load_state_dict(torch.load(os.path.join('models', args.test_name)))
+			model.load_state_dict(
+				torch.load(os.path.join('models', args.test_name)))
 		running_acc = 0
 		model.eval()
 		for batch_idx, sample in enumerate(dataloader):
@@ -89,11 +99,14 @@ def test(dataloader):
 			pred = pred.argmax(2)
 			correct = y.eq(pred.long()).sum()
 			acc = 100*correct.tolist()/pred.nelement()
-			print('Test:\t[{}|{}]\ttest accuracy:\t{:.4f}'.format(train_batch_idx, batch_idx, acc))
+			print('Test:\t[{}|{}]\ttest accuracy:\t{:.4f}'.format(
+				train_batch_idx, batch_idx, acc))
 			running_acc += acc
 			if args.set == 'train':
 				if batch_idx==args.test_batches:
-					logger.log_value('test_accuracy', running_acc/args.test_batches, train_batch_idx)
+					logger.log_value(
+						'test_accuracy', running_acc/args.test_batches, 
+						train_batch_idx)
 					model.train()
 					break
 		if args.set in ['val', 'test']:			
@@ -105,10 +118,11 @@ if not args.predict:
 	if args.set == 'train':
 		train_batch_idx = 0
 		for epoch in range(args.epochs):
-			for batch_idx, sample in enumerate(train_dataloader):
+			for batch_idx, sample in enumerate(DataLoaderDict['train']):
 				model.zero_grad()
 				model.hidden = model.init_hidden(args.batch_size)
-				x, y = sample['data'].transpose(0,1), sample['label'].transpose(0,1)
+				x = sample['data'].transpose(0,1)
+				y = sample['label'].transpose(0,1)
 				if use_gpu:
 					x, y = x.cuda(), y.cuda()
 				pred = model(x)
@@ -118,34 +132,39 @@ if not args.predict:
 				#scheduler.step()
 				pred = pred.argmax(2)
 				correct = y.eq(pred.long()).sum()
-				# tensor elements always return tensors? Had to use tolist to return as int
+				''' Tensor elements always return tensors? 
+				Had to use tolist to return as int
+				'''
 				acc = 100*correct.tolist()/pred.nelement()
 				logger.log_value('train_loss', loss, train_batch_idx)
 				logger.log_value('train_accuracy', acc, train_batch_idx)
-				print('Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(epoch, batch_idx, loss, acc))
+				print('Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(
+					epoch, batch_idx, loss, acc))
 				if train_batch_idx % args.test_every == 0:
-					# training will periodically test on val set or test set if validation doesn't exist
-					if len(val_dataloader) == 1:
-						test(test_dataloader)
+					''' Training will periodically test on val set or test set 
+					    if validation doesn't exist
+					'''
+					if len(DataLoaderDict['val']) == 1:
+						test(DataLoaderDict['test'])
 					else:
-						test(val_dataloader)
+						test(DataLoaderDict['val'])
 				if train_batch_idx % args.save_every == 0:
 					print('saving model {}'.format(train_batch_idx))
-					torch.save(model.state_dict(), model_savepath + 'iter{}.pth'.format(train_batch_idx))
+					torch.save(model.state_dict(), model_savepath 
+						       + 'iter{}.pth'.format(train_batch_idx))
 				train_batch_idx += 1
 
 	if args.set in ['val', 'test']:
-		test(Dataloader[args.set])
+		test(DataLoaderDict[args.set])
 	
 if args.predict:
-	''' 
-	Gets random sequence from dataset, inputs it into model, concatenates the
-	new predicted word onto the input and uses the new sequence [1:] as the next
-	input. Repeats this to get prediction of args.test_length
-	
+	''' Gets random sequence from dataset, inputs it into model, concatenates 
+	the	new predicted word onto the input and uses the new sequence [1:] as the 
+	next input. Repeats this to get prediction of args.test_length
 	'''
 	with torch.no_grad():
-		model.load_state_dict(torch.load(os.path.join('models', args.test_name)))
+		model.load_state_dict(
+			torch.load(os.path.join('models', args.test_name)))
 		model.eval()
 		dataset = Dataset[args.set]
 		start = np.random.randint(len(dataset)-1)
@@ -161,7 +180,8 @@ if args.predict:
 			pred = pred[-1,:]
 			infer = torch.cat((infer,pred.view(1,-1)),0)
 			infer = infer[1:,:]
-			#print('{}:\t'.format(i) + ''.join(train_dataset.chars[idx] for idx in infer.tolist()) + '\n')
 			inference.append(train_dataset.chars[infer[-1,0].tolist()])
 
 	print(''.join(inference))
+
+#tensorboard --logdir logs

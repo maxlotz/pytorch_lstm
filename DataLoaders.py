@@ -13,7 +13,8 @@ class LSTMDataset(Dataset):
 		 	Will not work if test is 0.\
 		 int seq_length: length of data sequence to use for training"
 
-		assert(len(split)==3),"Error, split must be list with 3 elements [train,val,test] eg. [0.8,0.1,0.1] which will be normalised to 1.0. If validation is not required set it as 0.0"
+		assert(len(split)==3), \
+		''' Error, split must be list with 3 elements [train,val,test] eg. [0.8,0.1,0.1] which will be normalised to 1.0. If validation is not required set it as 0.0 '''
 
 		self.set = set_
 		self.split = [float(i)/sum(split) for i in split]
@@ -30,15 +31,24 @@ class LSTMDataset(Dataset):
 
 		x, y = [],[] 
 		for i in range(self.n_chars - self.seq_length):
-			x.append([self.char_to_int[x] for x in raw_text[i:i+seq_length]])
-			y.append([self.char_to_int[y] for y in raw_text[i+1:i+seq_length+1]])
+			x.append(
+				[self.char_to_int[x] for x in raw_text[i:i+seq_length]])
+			y.append(
+				[self.char_to_int[y] for y in raw_text[i+1:i+seq_length+1]])
 
 		data, label = {},{}
-		data['train'], other_x, label['train'], other_y = train_test_split(x,y,test_size=self.split[1] + self.split[2], random_state=0)
+		data['train'], other_x,	label['train'], other_y = \
+		train_test_split(
+			x, y, test_size=self.split[1] + self.split[2], random_state=0)
 		if self.split[1] == 0:
-			data['val'], data['test'], label['val'], label['test'] = train_test_split(other_x, other_y, train_size=1, random_state=0)
+			data['val'], data['test'], label['val'], label['test'] = \
+			train_test_split(other_x, other_y, train_size=1, random_state=0)
 		else:
-			data['val'], data['test'], label['val'], label['test'] = train_test_split(other_x, other_y, test_size=self.split[2]/(self.split[1]+self.split[2]), random_state=0)
+			data['val'], data['test'], label['val'], label['test'] = \
+			train_test_split(
+				other_x, other_y, 
+				test_size=self.split[2] / (self.split[1]+self.split[2]), 
+				random_state=0)
 		self.data = torch.tensor(data[set_])
 		self.label = torch.tensor(label[set_])
 
