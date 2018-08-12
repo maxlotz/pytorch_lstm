@@ -23,7 +23,7 @@ parser.add_argument('--dataset', type=str, default="wonderland",
 parser.add_argument('--mode', type=str, default='all2one', 
 					choices=['all2one', 'all2all'],
                     help='defines input to output connectivity')
-parser.add_argument('--emsize', type=int, default=None,
+parser.add_argument('--emsize', type=int, default=500,
                     help='size of word embeddings')
 parser.add_argument('--nhid', type=int, default=500,
                     help='number of hidden units per layer')
@@ -50,7 +50,7 @@ parser.add_argument('--test_batches', type=int, default=200,
                     help='number of batches to test')
 parser.add_argument('--save_every', type=int, default=10000,
                     help='number of batch iterations to save model after')
-parser.add_argument('--name', type=str, default="wonder_noembed",
+parser.add_argument('--name', type=str, default="wonder_all2one",
                     help='name used for model save and tensorboard logging')
 parser.add_argument('--test_name', type=str, default="lstm_test_iter10000.pth",
                     help='name of file to test dataset on')
@@ -68,20 +68,22 @@ use_gpu = torch.cuda.is_available()
 # Inneficient but simple. Random seed inside Dataset ensures consistent order.
 DatasetDict, DataLoaderDict = {}, {}
 for set_ in ['train', 'val', 'test']:
-	DatasetDict[set_] = LSTMDataset(set_, args.split, args.seq_len)
-	DataLoaderDict[set_] = DataLoader(DatasetDict[set_], batch_size=args.batch_size,
-		                          shuffle=True, num_workers=4, drop_last=True)
+	DatasetDict[set_] = LSTMDataset(set_, args.split, args.seq_len, args.mode)
+	DataLoaderDict[set_] = DataLoader(
+		DatasetDict[set_], batch_size=args.batch_size, shuffle=True,
+		num_workers=4, drop_last=True)
 
 model = LSTMTagger(args.nhid, DatasetDict['train'].n_vocab, 
 	               DatasetDict['train'].n_vocab, args.batch_size, use_gpu, 
-	               args.nlayers, args.dropout, args.emsize)
+	               args.nlayers, args.dropout, args.emsize, args.mode)
 
 if use_gpu:
 	model.cuda()
 
 loss_function = nn.NLLLoss()
 optimizer = optim.SGD(model.parameters(), lr=args.lr)
-#scheduler = optim.lr_scheduler.StepLR(optimizer, 100000, gamma=0.1)
+# optional scheduler
+# scheduler = optim.lr_scheduler.StepLR(optimizer, 100000, gamma=0.1)
 logger = Logger(os.path.join('logs', args.name))
 
 def test(dataloader):
@@ -129,12 +131,11 @@ if not args.predict:
 				loss = loss_function(pred.transpose(1,2),y)
 				loss.backward()
 				optimizer.step()
-				#scheduler.step()
+				# scheduler.step()
 				pred = pred.argmax(2)
 				correct = y.eq(pred.long()).sum()
-				''' Tensor elements always return tensors? 
-				Had to use tolist to return as int
-				'''
+				# Tensor elements always return tensors? 
+				# Had to use tolist to return as int
 				acc = 100*correct.tolist()/pred.nelement()
 				logger.log_value('train_loss', loss, train_batch_idx)
 				logger.log_value('train_accuracy', acc, train_batch_idx)
@@ -166,12 +167,12 @@ if args.predict:
 		model.load_state_dict(
 			torch.load(os.path.join('models', args.test_name)))
 		model.eval()
-		dataset = Dataset[args.set]
+		dataset = DatasetDict[set_]
 		start = np.random.randint(len(dataset)-1)
 		infer = dataset[start]['data']
 		if use_gpu:
 			infer = infer.cuda()
-		inference = [train_dataset.chars[idx] for idx in infer.tolist()]
+		inference = [dataset.chars[idx] for idx in infer.tolist()]
 		infer = infer.view(-1,1)
 		infer = infer.expand(-1,model.hidden[0].size(1))
 		for i in range(args.test_length):
@@ -180,7 +181,7 @@ if args.predict:
 			pred = pred[-1,:]
 			infer = torch.cat((infer,pred.view(1,-1)),0)
 			infer = infer[1:,:]
-			inference.append(train_dataset.chars[infer[-1,0].tolist()])
+			inference.append(dataset.chars[infer[-1,0].tolist()])
 
 	print(''.join(inference))
 
