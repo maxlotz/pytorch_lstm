@@ -1,8 +1,14 @@
 import os
 import numpy as np
 from pydub import AudioSegment
+import torch
+from torch.utils.data import Dataset
+from DataLoaders import LSTMDataset
 
 AUDIODIR = 'datasets/audio/'
+
+
+'''
 def sec2human(sec):
 	h = sec//3600
 	m = (sec-h*3600)//60
@@ -40,3 +46,14 @@ for key, val in ChannelDict.items():
 
     with open(name, 'wb') as out_f:
         song.export(out_f, format='mp3')
+'''
+
+song = AudioSegment.from_mp3(os.path.join(AUDIODIR,'Temperature_SeanPaul.mp3'))
+#FrameRate reduced to balance acceptable audio quality and data size
+FrameRate = 8000
+song = song.set_frame_rate(FrameRate)
+song = song.set_channels(1)
+# Each sample is [ch1(sample_width), ch2(sample_width)]
+raw_data = song.raw_data
+encoded = np.fromstring(song.raw_data, dtype=np.uint16)
+decoded = encoded.tostring()

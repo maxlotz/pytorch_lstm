@@ -10,6 +10,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils
 from tensorboard_logger import Logger
+from pydub import AudioSegment
 
 from Models import LSTMTagger
 from DataLoaders import LSTMDataset
@@ -17,8 +18,8 @@ from DataLoaders import LSTMDataset
 parser = argparse.ArgumentParser(
 		description='multi-dataset LSTM train/tester with tensorboard logging')
 
-parser.add_argument('--dataset', type=str, default="wonderland", 
-					choices=['wonderland','wikitext','audio'],
+parser.add_argument('--dataset', type=str, default='letters', 
+					choices=['letters','words','audio'],
                     help='wonderland, wikitext, audio')
 parser.add_argument('--mode', type=str, default='all2one', 
 					choices=['all2one', 'all2all'],

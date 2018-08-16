@@ -4,13 +4,14 @@ import torch.nn.functional as F
 
 class LSTMTagger(nn.Module):
 	def __init__(self, hidden_dim, vocab_size, tagset_size, batch_size, 
-		         use_gpu, num_layers, dropout, embedding_dim):
+		         use_gpu, num_layers, dropout, embedding_dim, mode):
 		super(LSTMTagger, self).__init__()
 		self.tagset_size = tagset_size
 		self.num_layers = num_layers
 		self.hidden_dim = hidden_dim
 		self.embedding_dim = embedding_dim
 		self.use_gpu = use_gpu
+		self.mode = mode
 		if embedding_dim:
 			self.word_embeddings = nn.Embedding(vocab_size, embedding_dim)
 			self.dropout = nn.Dropout(p=dropout)
@@ -50,21 +51,8 @@ class LSTMTagger(nn.Module):
 		else:
 			onehot = self.one_hot(sentence,self.tagset_size)
 			lstm_out, self.hidden = self.lstm(onehot, self.hidden)
+		if self.mode == 'all2one':
+			lstm_out = lstm_out[-1,:,:].unsqueeze(0)
 		tag_space = self.hidden2tag(lstm_out)
 		tag_scores = F.log_softmax(tag_space, dim=2)
 		return tag_scores
-
-'''
-seq_len = 10
-batch_size = 2
-n_values = 5
-
-dummy = torch.randint(n_values,(seq_len,batch_size)).type(torch.LongTensor)
-
-dim = len(dummy.size())
-index = dummy.unsqueeze(-1)
-
-onehot = torch.zeros(dummy.size() + torch.Size([n_values]))
-onehot.scatter_(dim,index,1)
-
-'''
