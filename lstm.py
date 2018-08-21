@@ -21,10 +21,10 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--dataset', type=str, default='letters', 
 					choices=['letters','words','audio'],
                     help='wonderland, wikitext, audio')
-parser.add_argument('--mode', type=str, default='all2one', 
+parser.add_argument('--mode', type=str, default='all2all', 
 					choices=['all2one', 'all2all'],
                     help='defines input to output connectivity')
-parser.add_argument('--emsize', type=int, default=500,
+parser.add_argument('--emsize', type=int, default=None,
                     help='size of word embeddings')
 parser.add_argument('--nhid', type=int, default=500,
                     help='number of hidden units per layer')
@@ -51,7 +51,7 @@ parser.add_argument('--test_batches', type=int, default=200,
                     help='number of batches to test')
 parser.add_argument('--save_every', type=int, default=10000,
                     help='number of batch iterations to save model after')
-parser.add_argument('--name', type=str, default="wonder_all2one",
+parser.add_argument('--name', type=str, default="letter_noembed_pre",
                     help='name used for model save and tensorboard logging')
 parser.add_argument('--test_name', type=str, default="lstm_test_iter10000.pth",
                     help='name of file to test dataset on')
@@ -69,13 +69,22 @@ use_gpu = torch.cuda.is_available()
 # Inneficient but simple. Random seed inside Dataset ensures consistent order.
 DatasetDict, DataLoaderDict = {}, {}
 for set_ in ['train', 'val', 'test']:
-	DatasetDict[set_] = LSTMDataset(set_, args.split, args.seq_len, args.mode)
+	DatasetDict[set_] = LSTMDataset(args.dataset, set_, args.split, 
+		                            args.seq_len, args.mode)
 	DataLoaderDict[set_] = DataLoader(
 		DatasetDict[set_], batch_size=args.batch_size, shuffle=True,
 		num_workers=4, drop_last=True)
 
-model = LSTMTagger(args.nhid, DatasetDict['train'].n_vocab, 
-	               DatasetDict['train'].n_vocab, args.batch_size, use_gpu, 
+if args.dataset == 'audio':
+	vocab_size, tag_size = 1, 1
+
+if args.dataset == 'letters':
+	vocab_size = 1
+	tag_size = DatasetDict[set_].n_classes
+	if args.emsize:
+		vocab_size = DatasetDict[set_].n_classes
+
+model = LSTMTagger(args.nhid, vocab_size, tag_size, args.batch_size, use_gpu, 
 	               args.nlayers, args.dropout, args.emsize, args.mode)
 
 if use_gpu:
