@@ -83,7 +83,7 @@ class LSTMDataset(Dataset):
         
     def decode_seq(self, data):
         if self.datatype == 'letters':
-            return [self.decoder[x] for x in data]
+            return [self.decoder[int(x)] for x in data.tolist()]
         if self.datatype == 'audio':
             data = np.array(data, dtype=np.uint16)
             song = AudioSegment(data = data.tostring(),
@@ -101,6 +101,6 @@ class LSTMDataset(Dataset):
 
     def deprocess_seq(self, data):
         if self.datatype == 'letters':
-            return [x*(len(self.encoder)-1) for x in data]
+            return data*(len(self.encoder)-1)
         if self.datatype == 'audio':
             return data*65535

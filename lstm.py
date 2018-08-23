@@ -24,8 +24,6 @@ parser.add_argument('--dataset', type=str, default='letters',
 parser.add_argument('--mode', type=str, default='all2all', 
 					choices=['all2one', 'all2all'],
                     help='defines input to output connectivity')
-parser.add_argument('--emsize', type=int, default=None,
-                    help='size of word embeddings')
 parser.add_argument('--nhid', type=int, default=500,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=3,
@@ -53,7 +51,7 @@ parser.add_argument('--save_every', type=int, default=10000,
                     help='number of batch iterations to save model after')
 parser.add_argument('--name', type=str, default="letter_noembed_pre",
                     help='name used for model save and tensorboard logging')
-parser.add_argument('--test_name', type=str, default="lstm_test_iter10000.pth",
+parser.add_argument('--test_name', type=str, default="letter_noembed_preiter70000.pth",
                     help='name of file to test dataset on')
 parser.add_argument('--predict', action='store_true',
                     help='makes prediction of test_length starting with random'
@@ -75,17 +73,14 @@ for set_ in ['train', 'val', 'test']:
 		DatasetDict[set_], batch_size=args.batch_size, shuffle=True,
 		num_workers=4, drop_last=True)
 
+vocab_size = None
 if args.dataset == 'audio':
-	vocab_size, tag_size = 1, 1
-
-if args.dataset == 'letters':
-	vocab_size = 1
+	tag_size = 1
+elif args.dataset == 'letters':
 	tag_size = DatasetDict[set_].n_classes
-	if args.emsize:
-		vocab_size = DatasetDict[set_].n_classes
 
 model = LSTMTagger(args.nhid, vocab_size, tag_size, args.batch_size, use_gpu, 
-	               args.nlayers, args.dropout, args.emsize, args.mode)
+	               args.nlayers, args.dropout, args.mode)
 
 if use_gpu:
 	model.cuda()
@@ -179,20 +174,27 @@ if args.predict:
 		model.eval()
 		dataset = DatasetDict[set_]
 		start = np.random.randint(len(dataset)-1)
-		infer = dataset[start]['data']
+		infer = dataset[start]['data'] #[seq_len]
+		depro = dataset.deprocess_seq(infer)
+		inference = dataset.decode_seq(depro)
 		if use_gpu:
 			infer = infer.cuda()
-		inference = [dataset.chars[idx] for idx in infer.tolist()]
-		infer = infer.view(-1,1)
-		infer = infer.expand(-1,model.hidden[0].size(1))
+		infer = infer.view(-1,1) #[seq_len, 1]
+		infer = infer.expand(-1,model.hidden[0].size(1)) #[seq_len, batch_size]
 		for i in range(args.test_length):
 			pred = model(infer)
 			pred = pred.argmax(2)
-			pred = pred[-1,:]
-			infer = torch.cat((infer,pred.view(1,-1)),0)
+			pred = pred[-1,:] #[64]
+			pred = torch.tensor(dataset.preprocess_seq(pred.tolist()))
+			if use_gpu:
+				pred = pred.cuda()
+			pred = pred.view(1,-1) #[1, 64]
+			infer = torch.cat((infer, pred), 0)
 			infer = infer[1:,:]
-			inference.append(dataset.chars[infer[-1,0].tolist()])
-
-	print(''.join(inference))
+			deprocess = dataset.deprocess_seq(pred[-1])
+			decode = dataset.decode_seq(deprocess)
+			inference.append(decode[0])
+	predict = ''.join(inference)
+	print(predict)
 
 #tensorboard --logdir logs
