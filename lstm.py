@@ -18,9 +18,6 @@ from DataLoaders import LSTMDataset
 parser = argparse.ArgumentParser(
 		description='multi-dataset LSTM train/tester with tensorboard logging')
 
-parser.add_argument('--dataset', type=str, default='letters', 
-					choices=['letters','words','audio'],
-                    help='wonderland, wikitext, audio')
 parser.add_argument('--mode', type=str, default='all2all', 
 					choices=['all2one', 'all2all'],
                     help='defines input to output connectivity')
@@ -51,7 +48,7 @@ parser.add_argument('--save_every', type=int, default=10000,
                     help='number of batch iterations to save model after')
 parser.add_argument('--name', type=str, default="letter_noembed_pre",
                     help='name used for model save and tensorboard logging')
-parser.add_argument('--test_name', type=str, default="letter_noembed_preiter70000.pth",
+parser.add_argument('--test_name', type=str, default="letter_iter70000.pth",
                     help='name of file to test dataset on')
 parser.add_argument('--predict', action='store_true',
                     help='makes prediction of test_length starting with random'
@@ -67,25 +64,22 @@ use_gpu = torch.cuda.is_available()
 # Inneficient but simple. Random seed inside Dataset ensures consistent order.
 DatasetDict, DataLoaderDict = {}, {}
 for set_ in ['train', 'val', 'test']:
-	DatasetDict[set_] = LSTMDataset(args.dataset, set_, args.split, 
+	DatasetDict[set_] = LSTMDataset(set_, args.split, 
 		                            args.seq_len, args.mode)
 	DataLoaderDict[set_] = DataLoader(
 		DatasetDict[set_], batch_size=args.batch_size, shuffle=True,
 		num_workers=4, drop_last=True)
 
-vocab_size = None
-if args.dataset == 'audio':
-	tag_size = 1
-elif args.dataset == 'letters':
-	tag_size = DatasetDict[set_].n_classes
+tag_size = DatasetDict[set_].n_classes
 
-model = LSTMTagger(args.nhid, vocab_size, tag_size, args.batch_size, use_gpu, 
+model = LSTMTagger(args.nhid, tag_size, args.batch_size, use_gpu, 
 	               args.nlayers, args.dropout, args.mode)
 
 if use_gpu:
 	model.cuda()
 
 loss_function = nn.NLLLoss()
+
 optimizer = optim.SGD(model.parameters(), lr=args.lr)
 # optional scheduler
 # scheduler = optim.lr_scheduler.StepLR(optimizer, 100000, gamma=0.1)
@@ -136,15 +130,16 @@ if not args.predict:
 				loss = loss_function(pred.transpose(1,2),y)
 				loss.backward()
 				optimizer.step()
+				logger.log_value('train_loss', loss, train_batch_idx)
 				# scheduler.step()
 				pred = pred.argmax(2)
 				correct = y.eq(pred.long()).sum()
 				# Tensor elements always return tensors? 
 				# Had to use tolist to return as int
 				acc = 100*correct.tolist()/pred.nelement()
-				logger.log_value('train_loss', loss, train_batch_idx)
 				logger.log_value('train_accuracy', acc, train_batch_idx)
-				print('Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(
+				print(
+					'Train:[{}|{}]\tloss: {:.4f}\taccuracy: {:.4f}'.format(
 					epoch, batch_idx, loss, acc))
 				if train_batch_idx % args.test_every == 0:
 					''' Training will periodically test on val set or test set 

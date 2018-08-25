@@ -7,11 +7,10 @@ from sklearn.model_selection import train_test_split
 
 
 class LSTMDataset(Dataset):     
-    def __init__(self, datatype, set_, split, seq_length, mode):
+    def __init__(self, set_, split, seq_length, mode):
 
         assert(len(split)==3),"EXPLANATION"
 
-        self.datatype = datatype
         self.set = set_
         self.split = [float(i)/sum(split) for i in split] # normalizes to 1
         self.seq_length = seq_length
@@ -22,29 +21,15 @@ class LSTMDataset(Dataset):
         self.frame_rate = 8000
         self.channels = 1 # This cannot be changed because of ordering of data
 
-        if self.datatype == 'letters':
-            filename = 'wonderland.txt'
-            with open(
-                os.path.join(self.datadir, self.datatype, filename), 'r') as f:
-                    raw_data = f.read().lower()
-            self.decoder = sorted(list(set(raw_data)))         
-            self.encoder = {c:i for i, c in enumerate(self.decoder)}
-            self.n_classes = len(self.decoder)
-            enc_data = self.encode_seq(raw_data)
-            self.dataset_len = len(enc_data)
-            
-        elif self.datatype == 'audio':
-            filename = 'Temperature_SeanPaul.mp3'
-            song = AudioSegment.from_mp3(
-                os.path.join(self.datadir, self.datatype, filename))
-            # EXPLANATION HERE (reduce size of data)
-            song = song.set_sample_width(self.sample_width)
-            song = song.set_frame_rate(self.frame_rate)
-            song = song.set_channels(self.channels)
-            raw_data = song.raw_data
-            enc_data = self.encode_seq(raw_data)
-            # number of samples represented by raw bytestring
-            self.dataset_len = len(enc_data)
+        filename = 'wonderland.txt'
+        with open(
+            os.path.join(self.datadir, self.datatype, filename), 'r') as f:
+                raw_data = f.read().lower()
+        self.decoder = sorted(list(set(raw_data)))         
+        self.encoder = {c:i for i, c in enumerate(self.decoder)}
+        self.n_classes = len(self.decoder)
+        enc_data = self.encode_seq(raw_data)
+        self.dataset_len = len(enc_data)
 
         x, y = [],[] 
         for i in range(self.dataset_len - self.seq_length):
@@ -76,31 +61,14 @@ class LSTMDataset(Dataset):
         return {'data':self.data[idx,:], 'label':self.label[idx,:]}
 
     def encode_seq(self, data):
-        if self.datatype == 'letters':
-            return [self.encoder[x] for x in data]
-        if self.datatype == 'audio':
-            return np.fromstring(data, dtype=np.uint16)
-        
+        return [self.encoder[x] for x in data]
+       
     def decode_seq(self, data):
-        if self.datatype == 'letters':
-            return [self.decoder[int(x)] for x in data.tolist()]
-        if self.datatype == 'audio':
-            data = np.array(data, dtype=np.uint16)
-            song = AudioSegment(data = data.tostring(),
-                                sample_width = self.sample_width,
-                                frame_rate = self.frame_rate,
-                                channels = self.channels)
-            return song
+        return [self.decoder[int(x)] for x in data.tolist()]
 
     def preprocess_seq(self, data):
         # Scales data to the range [0,1] appropriate for lstm
-        if self.datatype == 'letters':
-            return [x/(len(self.encoder)-1) for x in data]
-        if self.datatype == 'audio':
-            return data/65535
+        return [x/(len(self.encoder)-1) for x in data]
 
     def deprocess_seq(self, data):
-        if self.datatype == 'letters':
-            return data*(len(self.encoder)-1)
-        if self.datatype == 'audio':
-            return data*65535
+        return data*(len(self.encoder)-1)
